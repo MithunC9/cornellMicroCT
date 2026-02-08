@@ -15,6 +15,10 @@ ct_ready — How this maps to microCT:
   - Later: registration + difference maps enable in-situ / time-lapse analysis
     (compare same sample before/after loading, heating, etc.).
 
+  How this maps to microCT: CT acquisition produces many 2D slice images
+  (one per reconstruction plane or rotation step). Stacking those slices
+  into a 3D array (Z, Y, X) gives the volume we analyze slice-by-slice or as a whole.
+
 Run examples:
   python test_image.py --demo
   python test_image.py --stack "path/to/slices_folder"
@@ -99,8 +103,10 @@ def load_stack(folder: Path) -> np.ndarray:
     """
     Load a folder of 2D slices into a 3D volume with shape (Z, Y, X).
     Supports png, jpg, tif, tiff. RGB images are converted to grayscale.
+    Files are sorted by filename so slice order is consistent.
     """
     exts = {".png", ".jpg", ".jpeg", ".tif", ".tiff"}
+    # Collect only image files and sort by name for consistent (Z, Y, X) ordering
     files = sorted([p for p in folder.iterdir() if p.suffix.lower() in exts])
 
     if not files:
@@ -120,8 +126,10 @@ def load_stack(folder: Path) -> np.ndarray:
             img = img[..., 0]  # Use first channel for RGB
         slices.append(img.astype(np.float32))
 
+    # Stack slices along first axis -> shape (Z, Y, X)
     vol = np.stack(slices, axis=0)
 
+    # Normalize to 0–255 for consistent segmentation
     vmin, vmax = float(vol.min()), float(vol.max())
     if vmax > vmin:
         vol = (vol - vmin) / (vmax - vmin) * 255.0
@@ -192,9 +200,11 @@ def run_stack(
             f"Volume has {n_slices} slices."
         )
 
+    # Extract middle (or chosen) slice and segment it with same method as demo
     mid = vol[slice_index].astype(np.float32)
     mask = segment_otsu_2d(mid)
 
+    # Save middle slice and its segmentation mask to outputs folder
     save_gray(
         outdir / "stack_middle_slice.png",
         mid,
@@ -206,6 +216,20 @@ def run_stack(
         "Segmentation (Otsu + cleanup)",
     )
 
+    # Display the middle slice and segmentation (blocks until user closes windows)
+    plt.figure()
+    plt.imshow(mid, cmap="gray")
+    plt.title(f"Middle slice z={slice_index} of {n_slices}")
+    plt.axis("off")
+    plt.tight_layout()
+    plt.show()
+    plt.figure()
+    plt.imshow(mask, cmap="gray")
+    plt.title("Segmented mask (material = white)")
+    plt.axis("off")
+    plt.tight_layout()
+    plt.show()
+
     if save_montage_flag:
         save_montage(
             vol,
@@ -215,6 +239,7 @@ def run_stack(
         )
         print(f"  saved montage: {outdir / 'stack_montage.png'}")
 
+    # Print volume shape and basic stats (min/max/mean intensity + material fraction)
     print(f"\n[STACK]")
     print(f"  volume shape (Z,Y,X): {vol.shape}")
     print_basic_metrics(mid, mask, f"STACK / SLICE z={slice_index}")
